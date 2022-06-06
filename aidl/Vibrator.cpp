@@ -572,7 +572,9 @@ ndk::ScopedAStatus Vibrator::perform(Effect effect, EffectStrength es, const std
     ALOGD("Vibrator perform effect %d", effect);
 
 #ifdef TARGET_SUPPORTS_OFFLOAD
-    if (effect < Effect::CLICK ||  effect > Effect::RINGTONE_15)
+    if ((effect < Effect::CLICK) ||
+        ((effect > Effect::HEAVY_CLICK) && (effect < Effect::RINGTONE_12)) ||
+        (effect > Effect::RINGTONE_15))
 #else
     if (effect < Effect::CLICK ||  effect > Effect::HEAVY_CLICK)
 #endif
