@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018,2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -30,6 +31,7 @@
 #pragma once
 
 #include <aidl/android/hardware/vibrator/BnVibrator.h>
+#include <thread>
 
 namespace aidl {
 namespace android {
@@ -40,6 +42,7 @@ class InputFFDevice {
 public:
     InputFFDevice();
     int playEffect(int effectId, EffectStrength es, long *playLengthMs);
+    int playPrimitive(int primitiveId, float amplitude, long *playLengthMs);
     int on(int32_t timeoutMs);
     int off();
     int setAmplitude(uint8_t amplitude);
@@ -47,6 +50,7 @@ public:
     bool mSupportEffects;
     bool mSupportExternalControl;
     bool mInExternalControl;
+
 private:
     int play(int effectId, uint32_t timeoutMs, long *playLengthMs);
     int mVibraFd;
@@ -93,6 +97,9 @@ class Vibrator : public BnVibrator {
 public:
     class InputFFDevice ff;
     class LedVibratorDevice ledVib;
+    Vibrator();
+    ~Vibrator();
+
 #ifdef TARGET_SUPPORTS_OFFLOAD
     class PatternOffload Offload;
 #endif
@@ -116,6 +123,15 @@ public:
     ndk::ScopedAStatus getSupportedAlwaysOnEffects(std::vector<Effect>* _aidl_return) override;
     ndk::ScopedAStatus alwaysOnEnable(int32_t id, Effect effect, EffectStrength strength) override;
     ndk::ScopedAStatus alwaysOnDisable(int32_t id) override;
+
+private:
+    static void composePlayThread(Vibrator *vibrator,
+                        const std::vector<CompositeEffect>& composite,
+                        const std::shared_ptr<IVibratorCallback>& callback);
+    std::thread composeThread;
+    int epollfd;
+    int pipefd[2];
+    std::atomic<bool> inComposition;
 };
 
 }  // namespace vibrator
