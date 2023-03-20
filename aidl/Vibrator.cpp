@@ -604,9 +604,14 @@ ndk::ScopedAStatus Vibrator::getSupportedEffects(std::vector<Effect>* _aidl_retu
     if (ledVib.mDetected)
         return ndk::ScopedAStatus::ok();
 
+#ifdef TARGET_SUPPORTS_OFFLOAD
+    *_aidl_return = {Effect::CLICK, Effect::DOUBLE_CLICK, Effect::TICK, Effect::THUD,
+                     Effect::POP, Effect::HEAVY_CLICK, Effect::RINGTONE_12,
+                     Effect::RINGTONE_13, Effect::RINGTONE_14, Effect::RINGTONE_15};
+#else
     *_aidl_return = {Effect::CLICK, Effect::DOUBLE_CLICK, Effect::TICK, Effect::THUD,
                      Effect::POP, Effect::HEAVY_CLICK};
-
+#endif
     return ndk::ScopedAStatus::ok();
 }
 
@@ -661,6 +666,7 @@ ndk::ScopedAStatus Vibrator::getSupportedPrimitives(std::vector<CompositePrimiti
         CompositePrimitive::THUD,   CompositePrimitive::SPIN,
         CompositePrimitive::QUICK_RISE, CompositePrimitive::SLOW_RISE,
         CompositePrimitive::QUICK_FALL, CompositePrimitive::LIGHT_TICK,
+        CompositePrimitive::LOW_TICK,
     };
     return ndk::ScopedAStatus::ok();
 }
