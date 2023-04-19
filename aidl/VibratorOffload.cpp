@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -25,6 +26,10 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
 #define LOG_TAG "vendor.qti.vibrator.offload"
@@ -38,6 +43,7 @@
 #include <fcntl.h>
 #include <cutils/log.h>
 #include <cutils/uevent.h>
+#include <cutils/properties.h>
 #include <sys/poll.h>
 #include <sys/ioctl.h>
 
@@ -65,6 +71,15 @@ namespace vibrator {
 
 PatternOffload::PatternOffload()
 {
+    char prop_str[PROPERTY_VALUE_MAX];
+    mEnabled = 0;
+
+    if (property_get("ro.vendor.qc_aon_presence", prop_str, NULL))
+        mEnabled = atoi(prop_str);
+
+    if (mEnabled != 1)
+        return;
+
     std::thread t(&PatternOffload::SSREventListener, this);
     t.detach();
 }
@@ -86,7 +101,7 @@ void PatternOffload::SSREventListener(void)
     }
 
     while ((n = uevent_kernel_multicast_recv(device_fd, msg, UEVENT_MSG_LEN)) > 0) {
-         if (n <= 0 || n >= UEVENT_MSG_LEN) {
+         if (n <= 0 || n > UEVENT_MSG_LEN) {
             ALOGE("Message length %d is not correct\n", n);
             continue;
          }
@@ -139,17 +154,17 @@ void PatternOffload::SendPatterns()
         return;
 
     rc = get_pattern_data(&data, &len);
-    if (rc < 0 || !data)
+    if (rc < 0)
         return;
 
     /* Send pattern data */
     rc = sendData(data, len);
     if (rc < 0)
-        return;
+        ALOGE("pattern offloaded failed\n");
+    else
+        ALOGI("Patterns offloaded successfully\n");
 
     free_pattern_mem(data);
-
-    ALOGI("Patterns offloaded successfully\n");
 }
 
 int PatternOffload::sendData(uint8_t *data, int len)
