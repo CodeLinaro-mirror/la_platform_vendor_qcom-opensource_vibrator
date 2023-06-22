@@ -1,3 +1,4 @@
+ifneq ($(TARGET_1G_DDR_RAM), true)
 ifeq ($(HAPTICS_OFFLOAD_SUPPORT),true)
 QTI_VIBRATOR_HAL_SERVICE := \
       vendor.qti.hardware.vibrator.offload.service
@@ -6,6 +7,7 @@ QTI_VIBRATOR_HAL_SERVICE := \
       vendor.qti.hardware.vibrator.service
 endif
 PRODUCT_PACKAGES += $(QTI_VIBRATOR_HAL_SERVICE)
+endif
 
 ifneq ($(BOARD_OPENSOURCE_DIR), )
       PRODUCT_COPY_FILES += \
