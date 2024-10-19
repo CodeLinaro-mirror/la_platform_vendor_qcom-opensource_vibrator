@@ -164,10 +164,6 @@ InputFFDevice::InputFFDevice()
     closedir(dp);
 }
 
-bool InputFFDevice::isPresent() {
-    return (mVibraFd != INVALID_VALUE);
-}
-
 /** Play vibration
  *
  *  @param effectId:  ID of the predefined effect will be played. If effectId is valid
@@ -197,7 +193,7 @@ int InputFFDevice::play(int effectId, uint32_t timeoutMs, long *playLengthMs) {
 
     mtx.lock();
     /* For QMAA compliance, return OK even if vibrator device doesn't exist */
-    if (!isPresent()) {
+    if (mVibraFd == INVALID_VALUE) {
         if (playLengthMs != NULL)
             *playLengthMs = 0;
             mtx.unlock();
@@ -296,7 +292,7 @@ int InputFFDevice::setAmplitude(uint8_t amplitude) {
     struct input_event ie;
 
     /* For QMAA compliance, return OK even if vibrator device doesn't exist */
-    if (!isPresent())
+    if (mVibraFd == INVALID_VALUE)
         return 0;
 
     tmp = amplitude * (STRONG_MAGNITUDE - LIGHT_MAGNITUDE) / 255;
@@ -780,12 +776,6 @@ ndk::ScopedAStatus VibratorOL::getPrimitiveDuration(CompositePrimitive primitive
     ALOGD("primitive-%d duration is %dms", primitive, *durationMs);
     return ndk::ScopedAStatus::ok();
 #endif
-
-    /* For QMAA compliance */
-    if (!ff.isPresent()) {
-        *durationMs = 10; /* fake a constant duration for all primitives */
-        return ndk::ScopedAStatus::ok();
-    }
 
     ret = getPrimitiveDurationFromSysfs(primitive_id, durationMs);
     if (ret < 0)

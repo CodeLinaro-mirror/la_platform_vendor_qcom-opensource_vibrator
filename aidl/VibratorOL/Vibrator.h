@@ -74,7 +74,6 @@ public:
     int on(int32_t timeoutMs);
     int off();
     int setAmplitude(uint8_t amplitude);
-    bool isPresent();
     bool mSupportGain;
     bool mSupportEffects;
     bool mSupportExternalControl;
