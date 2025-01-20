@@ -777,6 +777,12 @@ ndk::ScopedAStatus VibratorOL::getPrimitiveDuration(CompositePrimitive primitive
     return ndk::ScopedAStatus::ok();
 #endif
 
+    /* For QMAA compliance */
+    if (!ff.isPresent()) {
+        *durationMs = 0; /* fake a constant duration for all primitives */
+        return ndk::ScopedAStatus::ok();
+    }
+
     ret = getPrimitiveDurationFromSysfs(primitive_id, durationMs);
     if (ret < 0)
         return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);

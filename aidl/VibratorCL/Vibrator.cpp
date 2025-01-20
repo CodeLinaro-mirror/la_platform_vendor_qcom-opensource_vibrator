@@ -95,16 +95,10 @@ bool VibratorCL::inComposition = false;
 
 VibratorCL::VibratorCL()
 {
-    int ret;
     mSupportGain = true;
     mSupportEffects = true;
     mSupportExternalControl = true;
     inComposition = false;
-
-    ret = pal_init();
-    if (ret) {
-        ALOGD("pal_init failed ret=(%d)", ret);
-    }
 
     std::thread dynamicCalThread(&VibratorCL::HapticsCalibThread, this);
     dynamicCalThread.detach();
