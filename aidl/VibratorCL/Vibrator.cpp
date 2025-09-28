@@ -292,17 +292,20 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
 
     int status = 0;
     pal_param_haptics_cnfg_t payload;
-
     int32_t no_of_devices = 1;
+
+    HapticsMutex.lock();
     stream_attributes.type = PAL_STREAM_HAPTICS;
     stream_attributes.direction = PAL_AUDIO_OUTPUT;
     stream_attributes.info.opt_stream_info.haptics_type = PAL_STREAM_HAPTICS_TOUCH;
     GlobaleffectId = effectId;
 
-    HapticsMutex.lock();
     pal_devices = (struct pal_device *) calloc(no_of_devices, sizeof(struct pal_device));
-    if (pal_devices == nullptr)
-        return -1;
+    if (pal_devices == nullptr) {
+        ALOGE("Failed to allocate memory for pal_devices\n");
+        status = -1;
+        goto exit;
+    }
 
     pal_devices[0].id = PAL_DEVICE_OUT_HAPTICS_DEVICE;
     pal_devices[0].config.bit_width = 16;
@@ -311,6 +314,7 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
 
     ActiveUsecase = true;
     HapticsState = 0;
+    Eventcv.notify_all();
     cv.notify_all();
 
     if (pal_stream_handle_ == 0) {
@@ -321,6 +325,12 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
             goto exit;
         }
         ALOGD("Stream Opened successful\n");
+    }
+
+    status = pal_stream_start(pal_stream_handle_);
+    if (status) {
+        ALOGE("Error:Failed to Start haptics");
+        goto close_stream;
     }
 
     payload.mode = PAL_STREAM_HAPTICS_TOUCH;
@@ -342,13 +352,8 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
         *playLengthMs = EffectDuration * 1000;
     }
 
-    status = pal_stream_start(pal_stream_handle_);
-    if (status) {
-        ALOGE("Error:Failed to Start haptics");
-        goto close_stream;
-    }
-
-    goto exit;
+    HapticsMutex.unlock();
+    return 0;
 
 close_stream:
     pal_stream_close(pal_stream_handle_);
@@ -769,8 +774,9 @@ ndk::ScopedAStatus VibratorCL::compose(const std::vector<CompositeEffect>& compo
     int status;
 
     if (ActiveUsecase || inComposition) {
-        ALOGE("VibratorCL Compose: Haptics is already active skipping this instance");
-        return ndk::ScopedAStatus(AStatus_fromExceptionCode(EX_UNSUPPORTED_OPERATION));
+        ALOGE("VibratorCL Compose: Haptics is already active, stopping the current effect");
+        Eventcv.notify_all();
+        off();
     }
 
     if (composite.size() > ComposeSizeMax) {
