@@ -74,12 +74,16 @@ public:
         HAPTICS_STREAMING,
     } haptics_mode_t;
     static bool inComposition;
+    static int wake_lock_fd;
+    static int wake_unlock_fd;
+    static uint32_t wake_lock_cnt;
     int on(int32_t timeoutMs);
     void offEffect();
     void HapticsWait();
     void HapticsCalibThread();
     void HapticsWaitTillWaveformComp();
     void HapticsPCMRead();
+    void ClearHapticsHWFault();
     void CheckAndCloseActiveCLHaptics();
     static int32_t GetEffectData(int32_t effectID, haptics_effect_config_t &effectData);
     static int32_t LoadEffectData(int32_t effectID, haptics_effect_config_t &effectData);
@@ -120,6 +124,10 @@ public:
     ndk::ScopedAStatus getSupportedBraking(std::vector<Braking>* supported) override;
     ndk::ScopedAStatus composePwle(const std::vector<PrimitivePwle> &composite,
                                const std::shared_ptr<IVibratorCallback> &callback) override;
+    static int initWakeLocks(void);
+    static void deInitWakeLocks(void);
+    void acquireWakeLock();
+    void releaseWakeLock();
 private:
     int play(int effectId, int strength, long* playLengthMs, uint32_t timeoutMs, bool isCompose, float amplitude);
     void composePlayThread(const std::vector<CompositeEffect>& composite,

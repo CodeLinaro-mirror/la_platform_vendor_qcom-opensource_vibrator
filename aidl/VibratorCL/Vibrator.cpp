@@ -66,6 +66,15 @@ namespace vibrator {
 #define COMPOSE_EFFECT_DURATION_INMS  10
 #define THRESOLD_FILE_SIZE (1024 * 300) //300 KB
 
+#define WAKE_LOCK_NAME "vibratorcl_wl"
+#define WAKE_LOCK_PATH "/sys/power/wake_lock"
+#define WAKE_UNLOCK_PATH "/sys/power/wake_unlock"
+#define MAX_WAKE_LOCK_LENGTH 1024
+
+int VibratorCL::wake_lock_fd = -1;
+int VibratorCL::wake_unlock_fd = -1;
+uint32_t VibratorCL::wake_lock_cnt = 0;
+
 static constexpr int32_t ComposeDelayMaxMs = 1000;
 static constexpr int32_t ComposeSizeMax = 256;
 
@@ -102,6 +111,7 @@ VibratorCL::VibratorCL()
     mSupportExternalControl = true;
     inComposition = false;
 
+    VibratorCL::initWakeLocks();
     std::thread dynamicCalThread(&VibratorCL::HapticsCalibThread, this);
     dynamicCalThread.detach();
 }
@@ -109,7 +119,7 @@ VibratorCL::VibratorCL()
 VibratorCL::~VibratorCL()
 {
     CalThrdCreated.store(false);
-
+    VibratorCL::deInitWakeLocks();
     // Free the effect data from the map
     for (auto& entry : PcmEffectInfo) {
         if (entry.second.data != nullptr) {
@@ -119,6 +129,106 @@ VibratorCL::~VibratorCL()
     }
     PcmEffectInfo.clear();
     PcmEffectList.clear();
+}
+
+int VibratorCL::initWakeLocks(void) {
+
+    char buf[MAX_WAKE_LOCK_LENGTH] = {};
+    int size = 0, ret = 0;
+
+    wake_lock_fd = ::open(WAKE_LOCK_PATH, O_RDWR|O_APPEND);
+    if (wake_lock_fd < 0) {
+        ALOGE("Unable to open %s, err:%s",
+            WAKE_LOCK_PATH, strerror(errno));
+        if (errno == ENOENT) {
+            ALOGD("No wake lock support");
+            return -ENOENT;
+        }
+        return -EINVAL;
+    }
+
+    wake_unlock_fd = ::open(WAKE_UNLOCK_PATH, O_WRONLY|O_APPEND);
+    if (wake_unlock_fd < 0) {
+        ALOGE("Unable to open %s, err:%s",
+            WAKE_UNLOCK_PATH, strerror(errno));
+        ::close(wake_lock_fd);
+        wake_lock_fd = -1;
+        return -EINVAL;
+    }
+
+    size = ::read(wake_lock_fd, buf, sizeof(buf) - 1);
+    buf[MAX_WAKE_LOCK_LENGTH - 1] = '\0';
+    if (size >= 0) {
+        if (strstr(buf, WAKE_LOCK_NAME)) {
+            ALOGD("Clean up wake lock after restart");
+            ret = ::write(wake_unlock_fd, WAKE_LOCK_NAME, strlen(WAKE_LOCK_NAME));
+            if (ret < 0) {
+                ALOGE("Failed to release wakelock %d %s",
+                    ret, strerror(errno));
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
+void VibratorCL::deInitWakeLocks(void) {
+    if (wake_lock_fd >= 0) {
+        ::close(wake_lock_fd);
+        wake_lock_fd = -1;
+    }
+    if (wake_unlock_fd >= 0) {
+        ::close(wake_unlock_fd);
+        wake_unlock_fd = -1;
+    }
+}
+
+void VibratorCL::acquireWakeLock() {
+    int ret = 0;
+
+    if (wake_lock_fd < 0) {
+        ALOGE("Invalid fd %d", wake_lock_fd);
+        return;
+    }
+
+    HapticsMutex.lock();
+    if (wake_lock_cnt == 0) {
+        ALOGD("Acquiring wake lock %s", WAKE_LOCK_NAME);
+        ret = ::write(wake_lock_fd, WAKE_LOCK_NAME, strlen(WAKE_LOCK_NAME));
+        if (ret < 0) {
+            ALOGE("Failed to acquire wakelock %d %s", ret, strerror(errno));
+            HapticsMutex.unlock();
+            return;
+        }
+    }
+
+    wake_lock_cnt++;
+    ALOGD("wake lock count: %d", wake_lock_cnt);
+    HapticsMutex.unlock();
+}
+
+void VibratorCL::releaseWakeLock() {
+    int ret = 0;
+
+    if (wake_unlock_fd < 0) {
+        ALOGE("Invalid fd %d", wake_unlock_fd);
+        return;
+    }
+
+    HapticsMutex.lock();
+    if (wake_lock_cnt == 1) {
+        ALOGD("Releasing wake lock %s", WAKE_LOCK_NAME);
+        ret = ::write(wake_unlock_fd, WAKE_LOCK_NAME, strlen(WAKE_LOCK_NAME));
+        if (ret < 0) {
+            ALOGE("Failed to release wakelock %d %s", ret, strerror(errno));
+            HapticsMutex.unlock();
+            return;
+        }
+    }
+
+    wake_lock_cnt--;
+    ALOGD("wake lock count: %d", wake_lock_cnt);
+    HapticsMutex.unlock();
 }
 
 void VibratorCL::HapticsCalibThread() {
@@ -300,6 +410,11 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
     stream_attributes.info.opt_stream_info.haptics_type = PAL_STREAM_HAPTICS_TOUCH;
     GlobaleffectId = effectId;
 
+   /*
+    * Clear PMIC haptics fault to reset the haptics fault register
+    * for next haptics playback.
+    */
+    ClearHapticsHWFault();
     pal_devices = (struct pal_device *) calloc(no_of_devices, sizeof(struct pal_device));
     if (pal_devices == nullptr) {
         ALOGE("Failed to allocate memory for pal_devices\n");
@@ -364,14 +479,47 @@ exit:
     return status;
 }
 
+void VibratorCL::ClearHapticsHWFault() {
+    char swr_play_sysfs[] = "/sys/class/qcom-haptics/swr_play";
+    char SetClearFault[] = "1";
+    ssize_t bytesWritten;
+    int ret = 0;
+    int fd;
+
+    fd = TEMP_FAILURE_RETRY(::open(swr_play_sysfs, O_WRONLY));
+    if (fd < 0) {
+        ALOGE("Open %s failed, fd = %d\n", swr_play_sysfs, fd);
+        return;
+    }
+
+    bytesWritten = TEMP_FAILURE_RETRY(::write(fd, SetClearFault, strlen(SetClearFault)));
+    if (bytesWritten < 0) {
+        ALOGE("Error Writig to sysfs node\n");
+        goto closefd;
+    }
+
+    if (fsync(fd) < 0) {
+        ALOGE("Error flushing the file\n");
+        goto closefd;
+    }
+    ALOGD("Cleared Pmic Fault.\n");
+closefd:
+    close(fd);
+}
+
 void VibratorCL::offEffect() {
     int status = 0;
+    bool shouldStop = false;
 
     if (pal_stream_handle_) {
-       HapticsWait();
-       if (!ActiveUsecase && pal_stream_handle_) {
-           status = StopHapticsStream();
-       }
+        HapticsWait();
+        HapticsMutex.lock();
+        if (!ActiveUsecase && pal_stream_handle_ && HapticsState != 2)
+            shouldStop = true;
+        HapticsMutex.unlock();
+        if (shouldStop) {
+            status = StopHapticsStream();
+        }
     }
     OffThrdCreated = false;
     ALOGD("Offeffect exit");
@@ -379,7 +527,10 @@ void VibratorCL::offEffect() {
 
 int32_t VibratorCL::StopHapticsStream() {
     int status = 0;
+
     HapticsMutex.lock();
+    HapticsState = 2;
+    HapticsMutex.unlock();
     status = pal_stream_stop(pal_stream_handle_);
     if (status) {
         ALOGE("Error:Failed to stop haptics stream");
@@ -388,23 +539,30 @@ int32_t VibratorCL::StopHapticsStream() {
     if (status) {
         ALOGE("Error:Failed to close haptics stream");
     }
+    HapticsMutex.lock();
     pal_stream_handle_ = nullptr;
     if (pal_devices) {
        free(pal_devices);
        pal_devices = nullptr;
     }
 
-    HapticsState = 2;
     HapticsMutex.unlock();
     return status;
 }
 
 void VibratorCL::CheckAndCloseActiveCLHaptics() {
-    if (pal_stream_handle_) {
-       StopHapticsStream();
-       ALOGD("Closing CLHaptics Since OLHaptics is enabling");
-       cv.notify_all();
-       Eventcv.notify_all();
+    bool shouldStop = false;
+
+    HapticsMutex.lock();
+    if (pal_stream_handle_ && HapticsState != 2)
+        shouldStop = true;
+    HapticsMutex.unlock();
+
+    if (shouldStop) {
+        StopHapticsStream();
+        ALOGD("Closing CLHaptics Since OLHaptics is enabling");
+        cv.notify_all();
+        Eventcv.notify_all();
     }
 }
 
@@ -552,15 +710,19 @@ int32_t VibratorCL::offCurrentEffect()
 void VibratorCL::HapticsWait()
 {
     std::unique_lock<std::mutex> lock(EventMutex);
+    acquireWakeLock();
     cv.wait_for(lock,
             std::chrono::milliseconds(WAKEUP_MIN_IDLE_CHECK));
+    releaseWakeLock();
 }
 
 void VibratorCL::HapticsWaitTillWaveformComp()
 {
     std::unique_lock<std::mutex> eventlock(EventMutex);
+    acquireWakeLock();
     Eventcv.wait_for(eventlock,
             std::chrono::milliseconds(WAKEUP_MIN_IDLE_CHECK));
+    releaseWakeLock();
 
 }
 
