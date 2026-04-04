@@ -84,7 +84,7 @@ static pal_stream_handle_t *pal_stream_handle_;
 struct pal_buffer_config out_buf_config;
 struct pal_buffer_config in_buf_config;
 struct pal_buffer out_buffer;
-uint8_t HapticsState = 2;
+uint8_t HapticsState = HAPTICS_IDLE;
 uint8_t pcm_playback_supported;
 int GlobaleffectId = 0;
 
@@ -428,7 +428,7 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
     pal_devices[0].config.ch_info.channels = 1;
 
     ActiveUsecase = true;
-    HapticsState = 0;
+    HapticsState = HAPTICS_RUNNING;
     Eventcv.notify_all();
     cv.notify_all();
 
@@ -473,7 +473,7 @@ int VibratorCL::play(int effectId, int strength, long *playLengthMs, uint32_t ti
 close_stream:
     pal_stream_close(pal_stream_handle_);
     pal_stream_handle_ = nullptr;
-
+    HapticsState = HAPTICS_IDLE;
 exit:
     HapticsMutex.unlock();
     return status;
@@ -509,12 +509,17 @@ closefd:
 
 void VibratorCL::offEffect() {
     int status = 0;
+    bool shouldStop = false;
 
     if (pal_stream_handle_) {
-       HapticsWait();
-       if (!ActiveUsecase && pal_stream_handle_) {
-           status = StopHapticsStream();
-       }
+        HapticsWait();
+        HapticsMutex.lock();
+        if (!ActiveUsecase && pal_stream_handle_ && HapticsState != HAPTICS_CLOSED)
+            shouldStop = true;
+        HapticsMutex.unlock();
+        if (shouldStop) {
+            status = StopHapticsStream();
+        }
     }
     OffThrdCreated = false;
     ALOGD("Offeffect exit");
@@ -522,7 +527,10 @@ void VibratorCL::offEffect() {
 
 int32_t VibratorCL::StopHapticsStream() {
     int status = 0;
+
     HapticsMutex.lock();
+    HapticsState = HAPTICS_CLOSED;
+    HapticsMutex.unlock();
     status = pal_stream_stop(pal_stream_handle_);
     if (status) {
         ALOGE("Error:Failed to stop haptics stream");
@@ -531,23 +539,31 @@ int32_t VibratorCL::StopHapticsStream() {
     if (status) {
         ALOGE("Error:Failed to close haptics stream");
     }
+    HapticsMutex.lock();
     pal_stream_handle_ = nullptr;
     if (pal_devices) {
        free(pal_devices);
        pal_devices = nullptr;
     }
 
-    HapticsState = 2;
+    HapticsState = HAPTICS_IDLE;
     HapticsMutex.unlock();
     return status;
 }
 
 void VibratorCL::CheckAndCloseActiveCLHaptics() {
-    if (pal_stream_handle_) {
-       StopHapticsStream();
-       ALOGD("Closing CLHaptics Since OLHaptics is enabling");
-       cv.notify_all();
-       Eventcv.notify_all();
+    bool shouldStop = false;
+
+    HapticsMutex.lock();
+    if (pal_stream_handle_ && HapticsState != HAPTICS_CLOSED)
+        shouldStop = true;
+    HapticsMutex.unlock();
+
+    if (shouldStop) {
+        StopHapticsStream();
+        ALOGD("Closing CLHaptics Since OLHaptics is enabling");
+        cv.notify_all();
+        Eventcv.notify_all();
     }
 }
 
@@ -662,7 +678,7 @@ int32_t VibratorCL::StreamHapticsCallback (uint64_t *stream_handle,
     int32_t status = 0;
     ALOGE("event received from DSP %d", *event_data);
     Eventcv.notify_all();
-    HapticsState = *event_data;
+    HapticsState = HAPTICS_STOPPED;
     return status;
 }
 
@@ -671,7 +687,7 @@ int32_t VibratorCL::offCurrentEffect()
     int status = 0;
     pal_param_haptics_cnfg_t payload;
 
-    if (pal_stream_handle_ && HapticsState == 0) {
+    if (pal_stream_handle_ && HapticsState == HAPTICS_RUNNING) {
         payload.ch_mask = 1;
         status = HapticsSetParameters(PARAM_ID_HAPTICS_WAVE_DESIGNER_STOP_PARAM,
                                        &payload);
@@ -679,7 +695,7 @@ int32_t VibratorCL::offCurrentEffect()
             ALOGD("Error:Failed to Set haptics stop param");
         else
             ALOGD("%s: stop effect successfull", __func__);
-        HapticsState = 2;
+        HapticsState = HAPTICS_STOPPED;
     }
     else {
         ALOGD("%s: No current Effect is playing, skipping stop",__func__);
@@ -806,7 +822,7 @@ ndk::ScopedAStatus VibratorCL::perform(Effect effect, EffectStrength es,
     }
 
     if(pcm_playback_supported) {
-        ALOGD("effect Duration %d\n", playLengthMs);
+        ALOGD("effect Duration %ld\n", playLengthMs);
        *_aidl_return = playLengthMs;
     } else
        *_aidl_return = MIN_EFFECT_TIME;
@@ -904,7 +920,7 @@ void VibratorCL::composePlayThread(const std::vector<CompositeEffect>& composite
             stop = std::chrono::high_resolution_clock::now();
 
             duration = duration_cast<std::chrono::milliseconds>(stop - start) - std::chrono::milliseconds(COMPOSE_EFFECT_DURATION_INMS);
-            ALOGD("Delay in getting Waveform complete event: %d", duration);
+            ALOGD("Delay in getting Waveform complete event: %lld", duration.count());
         }
     }
 
