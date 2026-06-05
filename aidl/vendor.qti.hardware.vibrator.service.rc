@@ -7,5 +7,5 @@ service vendor.qti.vibrator /vendor/bin/hw/vendor.qti.hardware.vibrator.service
     user system
     group system input
 
-on late-init
+on post-fs-data
     write /sys/class/leds/vibrator/trigger "transient"
