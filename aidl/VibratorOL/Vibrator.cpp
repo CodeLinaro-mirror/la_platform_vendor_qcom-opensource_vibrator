@@ -443,6 +443,20 @@ static bool is_VI_sense_supported() {
     char visense_sysfs[50];
     char visense[3];
     int fd, ret;
+    soc_info_v0_1_t soc;
+
+    get_soc_info(&soc);
+    switch (soc.msm_cpu) {
+    case MSM_CPU_LAHAINA:
+    case APQ_CPU_LAHAINA:
+    case MSM_CPU_YUPIK:
+    case APQ_CPU_YUPIK:
+        ALOGD("SoC (ID=%d) does not support PAL-based CL haptics, "
+              "disabling VibratorCL.", soc.msm_cpu);
+        return false;
+    default:
+        break;
+    }
 
     ret = snprintf(visense_sysfs, sizeof(visense_sysfs), "%s%s", HAPTICS_SYSFS, "/visense_enabled");
     if (ret < 0) {

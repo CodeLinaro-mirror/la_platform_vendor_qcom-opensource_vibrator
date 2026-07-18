@@ -51,6 +51,10 @@
 #include "wsa_haptics_vi_api.h"
 #include "Vibrator.h"
 
+extern "C" {
+#include "libsoc_helper.h"
+}
+
 namespace aidl {
 namespace android {
 namespace hardware {
@@ -106,6 +110,19 @@ bool VibratorCL::inComposition = false;
 
 VibratorCL::VibratorCL()
 {
+    soc_info_v0_1_t soc;
+    get_soc_info(&soc);
+    switch (soc.msm_cpu) {
+    case MSM_CPU_LAHAINA:
+    case APQ_CPU_LAHAINA:
+    case MSM_CPU_YUPIK:
+    case APQ_CPU_YUPIK:
+        ALOGD("SoC (ID=%d): VibratorCL not supported, skipping initialization.", soc.msm_cpu);
+        return;
+    default:
+        break;
+    }
+
     mSupportGain = true;
     mSupportEffects = true;
     mSupportExternalControl = true;
