@@ -779,7 +779,7 @@ ndk::ScopedAStatus VibratorOL::getSupportedPrimitives(std::vector<CompositePrimi
     for (auto p : all_primitives) {
         int32_t durationMs = 0;
         int ret = getPrimitiveDurationFromSysfs(static_cast<uint32_t>(p), &durationMs);
-        if (ret == 0 && durationMs > 0)
+        if (ret >= 0 && (durationMs > 0 || p == CompositePrimitive::NOOP))
             supported->push_back(p);
     }
 
