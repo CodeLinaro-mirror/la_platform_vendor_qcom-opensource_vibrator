@@ -133,6 +133,7 @@ public:
                                const std::shared_ptr<IVibratorCallback> &callback) override;
     static int initWakeLocks(void);
     static void deInitWakeLocks(void);
+    static bool isSoCSupported();
     void acquireWakeLock();
     void releaseWakeLock();
 private:

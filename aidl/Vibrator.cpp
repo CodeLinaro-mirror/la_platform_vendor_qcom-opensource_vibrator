@@ -58,7 +58,7 @@ private:
     std::shared_ptr<VibratorSelector> mVibSelector;
 public:
     VibratorPrivate() {
-        mSupportCL = mVibratorOL.mSupportVISense;
+        mSupportCL = mVibratorOL.mSupportVISense && VibratorCL::isSoCSupported();
         mVibSelector = nullptr;
         mSelectedVibrator = &mVibratorOL;
         int32_t ret;
