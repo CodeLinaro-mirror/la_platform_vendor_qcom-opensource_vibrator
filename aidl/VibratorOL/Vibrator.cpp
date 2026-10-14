@@ -21,8 +21,8 @@
  */
 
 /*
- * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Changes from Qualcomm Technologies, Inc. are provided under the following license:
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -150,6 +150,7 @@ InputFFDevice::InputFFDevice()
             case MSM_CPU_PINEAPPLE:
             case MSM_CPU_SUN:
             case MSM_CPU_CANOE:
+            case MSM_CPU_WHALE:
                 mSupportExternalControl = true;
                 break;
             default:
@@ -595,7 +596,7 @@ ndk::ScopedAStatus VibratorOL::perform(Effect effect, EffectStrength es, const s
     long playLengthMs;
     int ret;
 
-    if (ledVib.mDetected)
+    if (ledVib.mDetected || !ff.mSupportEffects)
         return ndk::ScopedAStatus(AStatus_fromExceptionCode(EX_UNSUPPORTED_OPERATION));
 
     ALOGD("Vibrator perform effect %d", effect);
@@ -625,7 +626,7 @@ ndk::ScopedAStatus VibratorOL::perform(Effect effect, EffectStrength es, const s
 }
 
 ndk::ScopedAStatus VibratorOL::getSupportedEffects(std::vector<Effect>* _aidl_return) {
-    if (ledVib.mDetected)
+    if (ledVib.mDetected || !ff.mSupportEffects)
         return ndk::ScopedAStatus::ok();
 
     *_aidl_return = {Effect::CLICK, Effect::DOUBLE_CLICK, Effect::TICK, Effect::THUD,
@@ -638,7 +639,7 @@ ndk::ScopedAStatus VibratorOL::setAmplitude(float amplitude) {
     uint8_t tmp;
     int ret;
 
-    if (ledVib.mDetected)
+    if (ledVib.mDetected || !ff.mSupportGain)
         return ndk::ScopedAStatus(AStatus_fromExceptionCode(EX_UNSUPPORTED_OPERATION));
 
     ALOGD("Vibrator set amplitude: %f", amplitude);
@@ -679,21 +680,11 @@ ndk::ScopedAStatus VibratorOL::getCompositionSizeMax(int32_t* maxSize) {
     return ndk::ScopedAStatus::ok();
 }
 
-ndk::ScopedAStatus VibratorOL::getSupportedPrimitives(std::vector<CompositePrimitive>* supported) {
-    *supported =  {
-        CompositePrimitive::NOOP,   CompositePrimitive::CLICK,
-        CompositePrimitive::THUD,   CompositePrimitive::SPIN,
-        CompositePrimitive::QUICK_RISE, CompositePrimitive::SLOW_RISE,
-        CompositePrimitive::QUICK_FALL, CompositePrimitive::LIGHT_TICK,
-        CompositePrimitive::LOW_TICK,
-    };
-    return ndk::ScopedAStatus::ok();
-}
-
 static int getPrimitiveDurationFromSysfs(uint32_t primitive_id, int32_t* durationMs) {
     int count = 0;
     int fd = 0;
     int ret = 0;
+    int saved_ret = 0;
     /* the Max primitive id is 32767, so define the size of primitive_buf to 6 */
     char primitive_buf[6];
     /* the max primitive_duration is the max value of int32, so define the size to 10 */
@@ -737,24 +728,63 @@ static int getPrimitiveDurationFromSysfs(uint32_t primitive_id, int32_t* duratio
         ALOGE("read primitive %d failed, errno = %d", primitive_id, errno);
         goto close_fd;
     }
+    ret = 0;
 
     *durationMs = atoi(primitive_duration);
     *durationMs /= 1000;
 
 close_fd:
+    saved_ret = ret;
     ret = TEMP_FAILURE_RETRY(close(fd));
     if (ret < 0) {
         ALOGE("close primitive duration device failed, errno = %d", errno);
         return ret;
     }
 
-    return ret;
+    return saved_ret;
+}
+
+ndk::ScopedAStatus VibratorOL::getSupportedPrimitives(std::vector<CompositePrimitive>* supported) {
+    if (ledVib.mDetected || !ff.mSupportEffects)
+        return ndk::ScopedAStatus::ok();
+
+#ifdef USE_EFFECT_STREAM
+    *supported = {
+        CompositePrimitive::NOOP,   CompositePrimitive::CLICK,
+        CompositePrimitive::THUD,   CompositePrimitive::SPIN,
+        CompositePrimitive::QUICK_RISE, CompositePrimitive::SLOW_RISE,
+        CompositePrimitive::QUICK_FALL, CompositePrimitive::LIGHT_TICK,
+        CompositePrimitive::LOW_TICK,
+    };
+    return ndk::ScopedAStatus::ok();
+#else
+    static const std::vector<CompositePrimitive> all_primitives = {
+        CompositePrimitive::NOOP,   CompositePrimitive::CLICK,
+        CompositePrimitive::THUD,   CompositePrimitive::SPIN,
+        CompositePrimitive::QUICK_RISE, CompositePrimitive::SLOW_RISE,
+        CompositePrimitive::QUICK_FALL, CompositePrimitive::LIGHT_TICK,
+        CompositePrimitive::LOW_TICK,
+    };
+
+    supported->clear();
+    for (auto p : all_primitives) {
+        int32_t durationMs = 0;
+        int ret = getPrimitiveDurationFromSysfs(static_cast<uint32_t>(p), &durationMs);
+        if (ret >= 0)
+            supported->push_back(p);
+    }
+
+    return ndk::ScopedAStatus::ok();
+#endif
 }
 
 ndk::ScopedAStatus VibratorOL::getPrimitiveDuration(CompositePrimitive primitive,
                                                   int32_t* durationMs) {
     uint32_t primitive_id = static_cast<uint32_t>(primitive);
     int ret = 0;
+
+    if (ledVib.mDetected || !ff.mSupportEffects)
+        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 
 #ifdef USE_EFFECT_STREAM
     primitive_id |= PRIMITIVE_ID_MASK ;
@@ -860,6 +890,9 @@ ndk::ScopedAStatus VibratorOL::compose(const std::vector<CompositeEffect>& compo
                                      const std::shared_ptr<IVibratorCallback>& callback) {
     int status, nfd = 0, durationMs = 0, timeoutMs = 0;
     struct epoll_event events;
+
+    if (ledVib.mDetected || !ff.mSupportEffects)
+        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 
     if (composite.size() > ComposeSizeMax) {
         return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
