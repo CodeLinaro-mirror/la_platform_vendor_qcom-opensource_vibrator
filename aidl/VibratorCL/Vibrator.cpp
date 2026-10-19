@@ -108,8 +108,7 @@ bool VibratorCL::OffThrdCreated;
 bool VibratorCL::ActiveUsecase = false;
 bool VibratorCL::inComposition = false;
 
-VibratorCL::VibratorCL()
-{
+bool VibratorCL::isSoCSupported() {
     soc_info_v0_1_t soc;
     get_soc_info(&soc);
     switch (soc.msm_cpu) {
@@ -117,11 +116,18 @@ VibratorCL::VibratorCL()
     case APQ_CPU_LAHAINA:
     case MSM_CPU_YUPIK:
     case APQ_CPU_YUPIK:
-        ALOGD("SoC (ID=%d): VibratorCL not supported, skipping initialization.", soc.msm_cpu);
-        return;
+        ALOGD("SoC (ID=%d) does not support PAL-based CL haptics, "
+              "disabling VibratorCL.", soc.msm_cpu);
+        return false;
     default:
-        break;
+        return true;
     }
+}
+
+VibratorCL::VibratorCL()
+{
+    if (!isSoCSupported())
+        return;
 
     mSupportGain = true;
     mSupportEffects = true;

@@ -4,5 +4,5 @@ service vendor.qti.vibrator /vendor/bin/hw/vendor.qti.hardware.vibrator.service
     group system input wakelock
     capabilities BLOCK_SUSPEND
 
-on late-init
+on post-fs-data
     write /sys/class/leds/vibrator/trigger "transient"
